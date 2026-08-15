@@ -57,8 +57,15 @@ body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:
 .controls{margin-top:26px;background:#fff;border:1px solid #ddd1ba;border-radius:15px;padding:16px 17px}
 .controls-top{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .controls label{font-size:14px;color:#555}
-select,button{font:inherit}
+select,button,input[type=number]{font:inherit}
 select{margin-left:5px;padding:7px 10px;border:1px solid #ccc;border-radius:8px;background:white}
+.fret-range{display:flex;align-items:center;gap:8px}
+.fret-range input[type=number]{
+  width:56px;padding:7px 8px;border:1px solid #ccc;border-radius:8px;background:white;text-align:center;
+}
+.fret-range input[type=number]:invalid{border-color:var(--wrong)}
+.fret-range .sep{color:#888}
+.range-error{font-size:12px;color:var(--wrong);margin-left:6px}
 .new{margin-left:auto;padding:8px 14px;border:1px solid #d2c4aa;border-radius:8px;background:#fff;cursor:pointer}
 .new:hover,.answer:hover{background:#faf5eb}
 .answers{display:grid;grid-template-columns:repeat(7,1fr);gap:9px;margin-top:15px}
@@ -118,15 +125,13 @@ select{margin-left:5px;padding:7px 10px;border:1px solid #ccc;border-radius:8px;
   <div class="controls">
     <div class="controls-top">
       <b>Choose the note:</b>
-      <label>Frets:
-        <select id="range">
-          <option value="3" selected>0–3</option>
-          <option value="5">0–5</option>
-          <option value="7">0–7</option>
-          <option value="9">0–9</option>
-          <option value="12">0–12</option>
-        </select>
+      <label class="fret-range">
+        Frets:
+        <input type="number" id="minFret" min="0" max="12" value="0">
+        <span class="sep">–</span>
+        <input type="number" id="maxFret" min="0" max="12" value="3">
       </label>
+      <span class="range-error" id="rangeError"></span>
       <button class="new" id="newQuestion">New position</button>
     </div>
 
@@ -136,7 +141,7 @@ select{margin-left:5px;padding:7px 10px;border:1px solid #ccc;border-radius:8px;
   <div class="help">
     <b>Reverse direction:</b> instead of seeing a note and finding it on the guitar,
     you see one fret/string position and identify the note. Only natural notes are used:
-    <b>C D E F G A B</b>.
+    <b>C D E F G A B</b>. Use the two fret boxes to set any custom fret range (e.g. 3–7).
   </div>
 
   <div class="footer">Standard tuning · E A D G B E</div>
@@ -148,6 +153,7 @@ const natural=["C","D","E","F","G","A","B"];
 const openMidi=[64,59,55,50,45,40];
 const stringNames=["E4","B3","G3","D3","A2","E2"];
 
+let minFret=0;
 let maxFret=3;
 let targetString=0;
 let targetFret=0;
@@ -161,8 +167,6 @@ let masterBus=null;
 function getCtx(){
   if(!audioCtx){
     audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    // Compressor lets us push individual note gains much louder
-    // without clipping/distorting when notes overlap.
     masterBus=audioCtx.createDynamicsCompressor();
     masterBus.threshold.value=-24;
     masterBus.knee.value=24;
@@ -178,15 +182,12 @@ function soundOn(){
   return document.getElementById("soundToggle").checked;
 }
 function volumeMult(){
-  // Slider is 0-150 (%), so this scales gain from 0x to 1.5x.
   const slider=document.getElementById("volumeSlider");
   return slider ? Number(slider.value)/100 : 1;
 }
 function midiToFreq(midi){
   return 440*Math.pow(2,(midi-69)/12);
 }
-// Plucked-string-ish tone: a few detuned oscillators through a lowpass
-// filter with a fast attack and exponential decay, like a guitar pluck.
 function pluck(freq,{duration=1.1,gain=0.7,delay=0}={}){
   const ctx=getCtx();
   const t0=ctx.currentTime+delay;
@@ -224,9 +225,7 @@ function playTargetNote(){
 }
 function playCorrectSound(){
   if(!soundOn()) return;
-  const ctx=getCtx();
-  const t0=ctx.currentTime;
-  [523.25,659.25,783.99].forEach((f,i)=>{ // C5 E5 G5 arpeggio
+  [523.25,659.25,783.99].forEach((f,i)=>{
     pluck(f,{duration:0.5,gain:0.5,delay:i*0.07});
   });
 }
@@ -258,7 +257,7 @@ function noteAt(s,f){
 function randomNaturalPosition(){
   const positions=[];
   for(let s=0;s<6;s++){
-    for(let f=0;f<=maxFret;f++){
+    for(let f=minFret;f<=maxFret;f++){
       if(natural.includes(noteAt(s,f))){
         positions.push([s,f,noteAt(s,f)]);
       }
@@ -294,7 +293,7 @@ function buildBoard(){
       const cell=document.createElement("div");
       cell.className="cell"+(f===0?" fret0":"");
 
-      if(f>maxFret) cell.classList.add("disabled");
+      if(f<minFret || f>maxFret) cell.classList.add("disabled");
 
       const line=document.createElement("div");
       line.className="string-line";
@@ -314,9 +313,42 @@ function buildBoard(){
   }
 }
 
+// Reads and validates the two fret-range number inputs.
+// Returns false (and shows an error) if the range is invalid or empty.
+function readFretRange(){
+  const minEl=document.getElementById("minFret");
+  const maxEl=document.getElementById("maxFret");
+  const errorEl=document.getElementById("rangeError");
+
+  let lo=Number(minEl.value);
+  let hi=Number(maxEl.value);
+
+  if(Number.isNaN(lo)||Number.isNaN(hi)||minEl.value===""||maxEl.value===""){
+    errorEl.textContent="Enter both frets";
+    return false;
+  }
+  lo=Math.min(Math.max(lo,0),12);
+  hi=Math.min(Math.max(hi,0),12);
+  if(lo>hi){
+    errorEl.textContent="Min must be ≤ max";
+    return false;
+  }
+
+  minFret=lo;
+  maxFret=hi;
+  errorEl.textContent="";
+  return true;
+}
+
 function newQuestion(){
-  maxFret=Number(document.getElementById("range").value);
-  const [s,f,n]=randomNaturalPosition();
+  if(!readFretRange()) return;
+
+  const picked=randomNaturalPosition();
+  if(!picked){
+    document.getElementById("rangeError").textContent="No natural notes in that range";
+    return;
+  }
+  const [s,f,n]=picked;
   targetString=s;
   targetFret=f;
   targetNote=n;
@@ -352,8 +384,6 @@ function answer(note,button){
 
     setTimeout(newQuestion,700);
   }else{
-    // Wrong answer: reveal the correct answer and wait for the user
-    // to click the correct note before moving on.
     locked=true;
     streak=0;
     xp=Math.max(0,xp-1);
@@ -369,7 +399,6 @@ function answer(note,button){
 
     updateStats();
 
-    // Allow the correct answer to advance to the next question.
     const correctButton=[...document.querySelectorAll(".answer")]
       .find(btn=>btn.textContent===targetNote);
     if(correctButton){
@@ -389,7 +418,8 @@ function updateStats(){
     Math.min(xp/150*100,100)+"%";
 }
 
-document.getElementById("range").addEventListener("change",newQuestion);
+document.getElementById("minFret").addEventListener("change",newQuestion);
+document.getElementById("maxFret").addEventListener("change",newQuestion);
 document.getElementById("newQuestion").addEventListener("click",newQuestion);
 document.getElementById("playBtn").addEventListener("click",()=>{
   getCtx();
