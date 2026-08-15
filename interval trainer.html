@@ -62,6 +62,18 @@ select{margin-left:5px;padding:7px 10px;border:1px solid #ccc;border-radius:8px;
 .dot{width:13px;height:13px;border-radius:50%;display:inline-block}
 .dot.root{background:var(--root)}.dot.target{background:var(--target)}
 
+.soundrow{display:flex;align-items:center;gap:14px;margin-top:14px;flex-wrap:wrap}
+.playbtn{padding:8px 14px;border:1px solid #d2c4aa;border-radius:8px;background:#fff;color:var(--gold);font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s}
+.playbtn:hover{background:#faf5eb}
+.playbtn:active{transform:scale(.96)}
+.playbtn.playing{background:var(--gold);color:#fff}
+.soundtoggle{display:flex;align-items:center;gap:6px;font-size:13px;color:#777;cursor:pointer;user-select:none}
+.soundtoggle input{cursor:pointer}
+.volumectl{display:flex;align-items:center;gap:7px;font-size:13px;color:#777}
+.volumectl input[type=range]{width:140px;accent-color:var(--gold);cursor:pointer}
+.volumectl #volumeLabel{min-width:38px;color:#555;font-weight:600}
+.marker{cursor:pointer}
+
 .help{margin-top:16px;color:#777;font-size:13px;line-height:1.6}
 .footer{text-align:center;color:#aaa;font-size:12px;margin-top:24px}
 @media(max-width:700px){
@@ -133,10 +145,21 @@ select{margin-left:5px;padding:7px 10px;border:1px solid #ccc;border-radius:8px;
     <span><span class="dot target"></span> 所选音程的位置</span>
   </div>
 
+  <div class="soundrow">
+    <button class="playbtn" id="playRootBtn">🔊 播放根音 + 音程</button>
+    <label class="soundtoggle"><input type="checkbox" id="soundToggle" checked> 点击圆点听音</label>
+    <label class="volumectl">音量
+      <input type="range" id="volumeSlider" min="0" max="400" value="150">
+      <span id="volumeLabel">150%</span>
+    </label>
+  </div>
+
   <div class="help">
     圆点上的数字是音程级数（1=根音，b3=小三度，5=纯五度，8=纯八度…），和你截图里的记法一致。
     选好根音和一个或多个音程后点“显示”，指板上会标出该品格范围内所有匹配的位置——同名音在不同弦
     不同品都会标出来，这样能看清同一个音程在整根指板上重复出现的所有形状。
+    点击“播放根音 + 音程”会依次播放根音、再播放你选中的每个音程音（多选时会一组一组播放），方便直接
+    听出音程的声音；也可以单独点击指板上任意圆点，只听那一个位置的单音。
   </div>
 
   <div class="footer">Standard tuning · E A D G B E</div>
@@ -170,6 +193,110 @@ let selectedIntervals=new Set(defaultOn);
 let shown=false; // whether the board currently shows an answer
 
 const rows=document.getElementById("rows");
+
+// ---------- Audio engine ----------
+let audioCtx=null;
+let masterBus=null;
+function getCtx(){
+  if(!audioCtx){
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    masterBus=audioCtx.createDynamicsCompressor();
+    masterBus.threshold.value=-24;
+    masterBus.knee.value=24;
+    masterBus.ratio.value=12;
+    masterBus.attack.value=0.002;
+    masterBus.release.value=0.2;
+    masterBus.connect(audioCtx.destination);
+  }
+  if(audioCtx.state==="suspended") audioCtx.resume();
+  return audioCtx;
+}
+function volumeMult(){
+  const slider=document.getElementById("volumeSlider");
+  return slider ? Number(slider.value)/100 : 1;
+}
+function midiToFreq(midi){
+  return 440*Math.pow(2,(midi-69)/12);
+}
+function pluck(freq,{duration=1.1,gain=0.7,delay=0}={}){
+  const ctx=getCtx();
+  const t0=ctx.currentTime+delay;
+  const appliedGain=gain*volumeMult();
+  const master=ctx.createGain();
+  master.gain.setValueAtTime(0.0001,t0);
+  master.gain.exponentialRampToValueAtTime(Math.max(appliedGain,0.0001),t0+0.012);
+  master.gain.exponentialRampToValueAtTime(0.0001,t0+duration);
+  master.connect(masterBus);
+
+  const filter=ctx.createBiquadFilter();
+  filter.type="lowpass";
+  filter.frequency.setValueAtTime(freq*6,t0);
+  filter.frequency.exponentialRampToValueAtTime(freq*1.5,t0+duration*0.8);
+  filter.connect(master);
+
+  [1,2.01,3.0].forEach((mult,i)=>{
+    const osc=ctx.createOscillator();
+    osc.type=i===0?"triangle":"sine";
+    osc.frequency.setValueAtTime(freq*mult,t0);
+    const g=ctx.createGain();
+    g.gain.value=i===0?1:0.18/i;
+    osc.connect(g);
+    g.connect(filter);
+    osc.start(t0);
+    osc.stop(t0+duration+0.05);
+  });
+}
+// Find the lowest-pitch fret/string position (within maxFret) for a note name.
+function lowestMidiForNote(note){
+  let best=null;
+  for(let s=0;s<6;s++){
+    for(let f=0;f<=maxFret;f++){
+      if(noteAt(s,f)===note){
+        const midi=openMidi[s]+f;
+        if(best===null || midi<best) best=midi;
+        break;
+      }
+    }
+  }
+  return best;
+}
+// Play the nearest-to-open-position pitch for a given note name
+// (used for the root-note button, which isn't tied to one fret/string).
+function playNoteName(note){
+  const best=lowestMidiForNote(note);
+  if(best!==null) pluck(midiToFreq(best),{duration:1.3,gain:0.8});
+}
+function playFretPosition(s,f){
+  const midi=openMidi[s]+f;
+  pluck(midiToFreq(midi),{duration:1.3,gain:0.8});
+}
+// Play the root note, then each selected interval's note right after it,
+// so you can hear how the interval actually sounds against the root.
+function playIntervalDemo(){
+  getCtx();
+  rootNote=document.getElementById("rootNote").value;
+  const rootMidi=lowestMidiForNote(rootNote);
+  if(rootMidi===null) return;
+
+  const sems=[...selectedIntervals].sort((a,b)=>a-b);
+  const pairGap=0.55;   // time between root and interval note within a pair
+  const groupGap=1.5;   // time between successive interval pairs
+  let t=0;
+
+  if(sems.length===0){
+    // No interval selected: just play the root twice for confirmation.
+    pluck(midiToFreq(rootMidi),{duration:1.0,gain:0.8,delay:0});
+    return;
+  }
+
+  sems.forEach(sem=>{
+    const targetMidi=rootMidi+sem;
+    pluck(midiToFreq(rootMidi),{duration:0.9,gain:0.75,delay:t});
+    pluck(midiToFreq(targetMidi),{duration:0.9,gain:0.75,delay:t+pairGap});
+    t+=groupGap;
+  });
+}
+// ---------- end audio engine ----------
 
 function noteAt(s,f){
   return noteNames[(openMidi[s]+f)%12];
@@ -235,11 +362,23 @@ function buildBoard(rootPositions, targetsByPos){
         const m=document.createElement("div");
         m.className="marker root";
         m.textContent="1";
+        m.addEventListener("click",()=>{
+          if(document.getElementById("soundToggle").checked){
+            getCtx();
+            playFretPosition(s,f);
+          }
+        });
         cell.appendChild(m);
       }else if(tgt){
         const m=document.createElement("div");
         m.className="marker target";
         m.textContent=tgt;
+        m.addEventListener("click",()=>{
+          if(document.getElementById("soundToggle").checked){
+            getCtx();
+            playFretPosition(s,f);
+          }
+        });
         cell.appendChild(m);
       }
 
@@ -277,6 +416,15 @@ document.getElementById("revealBtn").addEventListener("click",reveal);
 document.getElementById("clearBtn").addEventListener("click",clearBoard);
 document.getElementById("range").addEventListener("change",()=>{ if(shown) reveal(); else clearBoard(); });
 document.getElementById("rootNote").addEventListener("change",()=>{ if(shown) reveal(); else clearBoard(); });
+document.getElementById("playRootBtn").addEventListener("click",(e)=>{
+  playIntervalDemo();
+  const btn=e.currentTarget;
+  btn.classList.add("playing");
+  setTimeout(()=>btn.classList.remove("playing"),260);
+});
+document.getElementById("volumeSlider").addEventListener("input",(e)=>{
+  document.getElementById("volumeLabel").textContent=e.target.value+"%";
+});
 
 buildChips();
 clearBoard();
