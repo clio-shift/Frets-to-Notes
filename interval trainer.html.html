@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>吉他音程速查 — Interval Reveal</title>
+<style>
+:root{
+  --bg:#f5f5f4; --card:#fff; --gold:#c27620; --gold2:#ead9b1;
+  --board:#ddc99f; --line:#967632; --text:#222; --muted:#777;
+  --root:#963b38; --target:#c27620;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--text)}
+.app{max-width:1050px;margin:auto;padding:25px 24px 60px}
+.header{display:flex;gap:18px;align-items:center}
+.back{font-size:28px;color:#666}
+.top{flex:1}.title{font-size:22px;font-weight:700}
+.sub{font-size:14px;color:#777;margin-top:5px}
+
+.controls{margin-top:22px;background:#fff;border:1px solid #ddd1ba;border-radius:15px;padding:16px 17px}
+.controls-top{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.controls label{font-size:14px;color:#555}
+select,button{font:inherit}
+select{margin-left:5px;padding:7px 10px;border:1px solid #ccc;border-radius:8px;background:white}
+.reveal{padding:8px 18px;border:none;border-radius:8px;background:var(--gold);color:#fff;font-weight:700;cursor:pointer}
+.reveal:hover{opacity:.9}
+.clear{padding:8px 14px;border:1px solid #d2c4aa;border-radius:8px;background:#fff;cursor:pointer}
+.clear:hover{background:#faf5eb}
+
+.interval-picker{margin-top:16px}
+.interval-picker>div:first-child{font-size:14px;font-weight:600;margin-bottom:9px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:7px 12px;border:1px solid #d2c4aa;border-radius:20px;background:#fff;font-size:13px;color:#666;cursor:pointer;user-select:none}
+.chip.on{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:700}
+
+.board-area{margin-top:20px;background:var(--gold2);padding:10px 10px 14px;border-radius:9px;overflow-x:auto}
+.board{min-width:900px}
+.frets,.rows{display:grid;grid-template-columns:58px repeat(13,1fr)}
+.frets{margin-bottom:5px;color:#765f36;font-size:12px;text-align:center}
+.string-name{display:flex;align-items:center;color:#765f36;font-size:12px}
+.cell{height:56px;border-right:1px solid var(--line);background:var(--board);display:flex;align-items:center;justify-content:center;position:relative}
+.cell.fret0{border-left:4px solid #777;background:#eee5d0}
+.cell.disabled{opacity:.4}
+.string-line{
+  position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);
+  background:linear-gradient(to bottom,#8d6d31,#b08a43 45%,#7d6029);
+  box-shadow:0 1px 1px #6f5426;
+  z-index:1;
+}
+.marker{
+  position:absolute;z-index:3;width:27px;height:27px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:12px;font-weight:700;
+  border:3px solid white;box-shadow:0 1px 4px rgba(0,0,0,.35);
+}
+.marker.root{background:var(--root)}
+.marker.target{background:var(--target)}
+
+.legend{display:flex;gap:18px;margin-top:14px;font-size:12px;color:#666;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.dot{width:13px;height:13px;border-radius:50%;display:inline-block}
+.dot.root{background:var(--root)}.dot.target{background:var(--target)}
+
+.soundrow{display:flex;align-items:center;gap:14px;margin-top:14px;flex-wrap:wrap}
+.playbtn{padding:8px 14px;border:1px solid #d2c4aa;border-radius:8px;background:#fff;color:var(--gold);font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s}
+.playbtn:hover{background:#faf5eb}
+.playbtn:active{transform:scale(.96)}
+.playbtn.playing{background:var(--gold);color:#fff}
+.soundtoggle{display:flex;align-items:center;gap:6px;font-size:13px;color:#777;cursor:pointer;user-select:none}
+.soundtoggle input{cursor:pointer}
+.volumectl{display:flex;align-items:center;gap:7px;font-size:13px;color:#777}
+.volumectl input[type=range]{width:140px;accent-color:var(--gold);cursor:pointer}
+.volumectl #volumeLabel{min-width:38px;color:#555;font-weight:600}
+.marker{cursor:pointer}
+
+.help{margin-top:16px;color:#777;font-size:13px;line-height:1.6}
+.footer{text-align:center;color:#aaa;font-size:12px;margin-top:24px}
+@media(max-width:700px){
+ .app{padding:16px 10px 60px}
+ .board{min-width:900px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="back">←</div>
+    <div class="top">
+      <div class="title">🎼 吉他音程速查</div>
+      <div class="sub">选根音 + 音程，点“显示”看所有位置。用来先记熟形状，不计分。</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="controls-top">
+      <label>根音:
+        <select id="rootNote">
+          <option value="C" selected>C</option>
+          <option value="C#">C#/Db</option>
+          <option value="D">D</option>
+          <option value="D#">D#/Eb</option>
+          <option value="E">E</option>
+          <option value="F">F</option>
+          <option value="F#">F#/Gb</option>
+          <option value="G">G</option>
+          <option value="G#">G#/Ab</option>
+          <option value="A">A</option>
+          <option value="A#">A#/Bb</option>
+          <option value="B">B</option>
+        </select>
+      </label>
+      <label>品格范围:
+        <select id="range">
+          <option value="3">0–3</option>
+          <option value="5" selected>0–5</option>
+          <option value="7">0–7</option>
+          <option value="9">0–9</option>
+          <option value="12">0–12</option>
+        </select>
+      </label>
+      <button class="reveal" id="revealBtn">显示</button>
+      <button class="clear" id="clearBtn">清空</button>
+    </div>
+
+    <div class="interval-picker">
+      <div>选音程（可多选，一起显示）:</div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+
+  <div class="board-area">
+    <div class="board">
+      <div class="frets">
+        <div></div>
+        <div>0</div><div>1</div><div>2</div><div>3</div><div>4</div><div>5</div>
+        <div>6</div><div>7</div><div>8</div><div>9</div><div>10</div><div>11</div><div>12</div>
+      </div>
+      <div id="rows"></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot root"></span> 根音 (1)</span>
+    <span><span class="dot target"></span> 所选音程的位置</span>
+  </div>
+
+  <div class="soundrow">
+    <button class="playbtn" id="playRootBtn">🔊 播放根音 + 音程</button>
+    <label class="soundtoggle"><input type="checkbox" id="soundToggle" checked> 点击圆点听音</label>
+    <label class="volumectl">音量
+      <input type="range" id="volumeSlider" min="0" max="400" value="150">
+      <span id="volumeLabel">150%</span>
+    </label>
+  </div>
+
+  <div class="help">
+    圆点上的数字是音程级数（1=根音，b3=小三度，5=纯五度，8=纯八度…），和你截图里的记法一致。
+    选好根音和一个或多个音程后点“显示”，指板上会标出该品格范围内所有匹配的位置——同名音在不同弦
+    不同品都会标出来，这样能看清同一个音程在整根指板上重复出现的所有形状。
+    点击“播放根音 + 音程”会依次播放根音、再播放你选中的每个音程音（多选时会一组一组播放），方便直接
+    听出音程的声音；也可以单独点击指板上任意圆点，只听那一个位置的单音。
+  </div>
+
+  <div class="footer">Standard tuning · E A D G B E</div>
+</div>
+
+<script>
+const noteNames=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const openMidi=[64,59,55,50,45,40]; // high E to low E
+const stringNames=["E4","B3","G3","D3","A2","E2"];
+
+const intervals=[
+  {sem:0,  cn:"纯一度",  short:"1"},
+  {sem:1,  cn:"小二度",  short:"b2"},
+  {sem:2,  cn:"大二度",  short:"2"},
+  {sem:3,  cn:"小三度",  short:"b3"},
+  {sem:4,  cn:"大三度",  short:"3"},
+  {sem:5,  cn:"纯四度",  short:"4"},
+  {sem:6,  cn:"三全音",  short:"b5"},
+  {sem:7,  cn:"纯五度",  short:"5"},
+  {sem:8,  cn:"小六度",  short:"b6"},
+  {sem:9,  cn:"大六度",  short:"6"},
+  {sem:10, cn:"小七度",  short:"b7"},
+  {sem:11, cn:"大七度",  short:"7"},
+  {sem:12, cn:"纯八度",  short:"8"},
+];
+const defaultOn=[7]; // 纯五度 selected by default
+
+let maxFret=5;
+let rootNote="C";
+let selectedIntervals=new Set(defaultOn);
+let shown=false; // whether the board currently shows an answer
+
+const rows=document.getElementById("rows");
+
+// ---------- Audio engine ----------
+let audioCtx=null;
+let masterBus=null;
+function getCtx(){
+  if(!audioCtx){
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    masterBus=audioCtx.createDynamicsCompressor();
+    masterBus.threshold.value=-24;
+    masterBus.knee.value=24;
+    masterBus.ratio.value=12;
+    masterBus.attack.value=0.002;
+    masterBus.release.value=0.2;
+    masterBus.connect(audioCtx.destination);
+  }
+  if(audioCtx.state==="suspended") audioCtx.resume();
+  return audioCtx;
+}
+function volumeMult(){
+  const slider=document.getElementById("volumeSlider");
+  return slider ? Number(slider.value)/100 : 1;
+}
+function midiToFreq(midi){
+  return 440*Math.pow(2,(midi-69)/12);
+}
+function pluck(freq,{duration=1.1,gain=0.7,delay=0}={}){
+  const ctx=getCtx();
+  const t0=ctx.currentTime+delay;
+  const appliedGain=gain*volumeMult();
+  const master=ctx.createGain();
+  master.gain.setValueAtTime(0.0001,t0);
+  master.gain.exponentialRampToValueAtTime(Math.max(appliedGain,0.0001),t0+0.012);
+  master.gain.exponentialRampToValueAtTime(0.0001,t0+duration);
+  master.connect(masterBus);
+
+  const filter=ctx.createBiquadFilter();
+  filter.type="lowpass";
+  filter.frequency.setValueAtTime(freq*6,t0);
+  filter.frequency.exponentialRampToValueAtTime(freq*1.5,t0+duration*0.8);
+  filter.connect(master);
+
+  [1,2.01,3.0].forEach((mult,i)=>{
+    const osc=ctx.createOscillator();
+    osc.type=i===0?"triangle":"sine";
+    osc.frequency.setValueAtTime(freq*mult,t0);
+    const g=ctx.createGain();
+    g.gain.value=i===0?1:0.18/i;
+    osc.connect(g);
+    g.connect(filter);
+    osc.start(t0);
+    osc.stop(t0+duration+0.05);
+  });
+}
+// Find the lowest-pitch fret/string position (within maxFret) for a note name.
+function lowestMidiForNote(note){
+  let best=null;
+  for(let s=0;s<6;s++){
+    for(let f=0;f<=maxFret;f++){
+      if(noteAt(s,f)===note){
+        const midi=openMidi[s]+f;
+        if(best===null || midi<best) best=midi;
+        break;
+      }
+    }
+  }
+  return best;
+}
+// Play the nearest-to-open-position pitch for a given note name
+// (used for the root-note button, which isn't tied to one fret/string).
+function playNoteName(note){
+  const best=lowestMidiForNote(note);
+  if(best!==null) pluck(midiToFreq(best),{duration:1.3,gain:0.8});
+}
+function playFretPosition(s,f){
+  const midi=openMidi[s]+f;
+  pluck(midiToFreq(midi),{duration:1.3,gain:0.8});
+}
+// Play the root note, then each selected interval's note right after it,
+// so you can hear how the interval actually sounds against the root.
+function playIntervalDemo(){
+  getCtx();
+  rootNote=document.getElementById("rootNote").value;
+  const rootMidi=lowestMidiForNote(rootNote);
+  if(rootMidi===null) return;
+
+  const sems=[...selectedIntervals].sort((a,b)=>a-b);
+  const pairGap=0.55;   // time between root and interval note within a pair
+  const groupGap=1.5;   // time between successive interval pairs
+  let t=0;
+
+  if(sems.length===0){
+    // No interval selected: just play the root twice for confirmation.
+    pluck(midiToFreq(rootMidi),{duration:1.0,gain:0.8,delay:0});
+    return;
+  }
+
+  sems.forEach(sem=>{
+    const targetMidi=rootMidi+sem;
+    pluck(midiToFreq(rootMidi),{duration:0.9,gain:0.75,delay:t});
+    pluck(midiToFreq(targetMidi),{duration:0.9,gain:0.75,delay:t+pairGap});
+    t+=groupGap;
+  });
+}
+// ---------- end audio engine ----------
+
+function noteAt(s,f){
+  return noteNames[(openMidi[s]+f)%12];
+}
+function pcOf(note){ return noteNames.indexOf(note); }
+
+function buildChips(){
+  const chips=document.getElementById("chips");
+  chips.innerHTML="";
+  intervals.forEach(iv=>{
+    const chip=document.createElement("div");
+    chip.className="chip"+(selectedIntervals.has(iv.sem)?" on":"");
+    chip.textContent=iv.cn+" ("+iv.short+")";
+    chip.addEventListener("click",()=>{
+      if(selectedIntervals.has(iv.sem)){
+        selectedIntervals.delete(iv.sem);
+      }else{
+        selectedIntervals.add(iv.sem);
+      }
+      chip.classList.toggle("on");
+      if(shown) reveal(); // live-update if already revealed
+    });
+    chips.appendChild(chip);
+  });
+}
+
+function allPositionsForNote(note){
+  const list=[];
+  for(let s=0;s<6;s++){
+    for(let f=0;f<=maxFret;f++){
+      if(noteAt(s,f)===note) list.push([s,f]);
+    }
+  }
+  return list;
+}
+
+function buildBoard(rootPositions, targetsByPos){
+  rows.innerHTML="";
+  for(let s=0;s<6;s++){
+    const row=document.createElement("div");
+    row.className="rows";
+
+    const label=document.createElement("div");
+    label.className="string-name";
+    label.textContent=stringNames[s];
+    row.appendChild(label);
+
+    for(let f=0;f<=12;f++){
+      const cell=document.createElement("div");
+      cell.className="cell"+(f===0?" fret0":"");
+      if(f>maxFret) cell.classList.add("disabled");
+
+      const line=document.createElement("div");
+      line.className="string-line";
+      line.style.height=[2,2.8,3.8,5,6.5,8][s]+"px";
+      cell.appendChild(line);
+
+      const key=s+"-"+f;
+      const isRoot=rootPositions.has(key);
+      const tgt=targetsByPos.get(key);
+
+      if(isRoot){
+        const m=document.createElement("div");
+        m.className="marker root";
+        m.textContent="1";
+        m.addEventListener("click",()=>{
+          if(document.getElementById("soundToggle").checked){
+            getCtx();
+            playFretPosition(s,f);
+          }
+        });
+        cell.appendChild(m);
+      }else if(tgt){
+        const m=document.createElement("div");
+        m.className="marker target";
+        m.textContent=tgt;
+        m.addEventListener("click",()=>{
+          if(document.getElementById("soundToggle").checked){
+            getCtx();
+            playFretPosition(s,f);
+          }
+        });
+        cell.appendChild(m);
+      }
+
+      row.appendChild(cell);
+    }
+    rows.appendChild(row);
+  }
+}
+
+function reveal(){
+  shown=true;
+  maxFret=Number(document.getElementById("range").value);
+  rootNote=document.getElementById("rootNote").value;
+
+  const rootPositions=new Set(allPositionsForNote(rootNote).map(p=>p[0]+"-"+p[1]));
+
+  const targetsByPos=new Map(); // key -> label (short)
+  intervals.filter(iv=>selectedIntervals.has(iv.sem)).forEach(iv=>{
+    const note=noteNames[(pcOf(rootNote)+iv.sem)%12];
+    allPositionsForNote(note).forEach(p=>{
+      const key=p[0]+"-"+p[1];
+      if(!rootPositions.has(key)) targetsByPos.set(key, iv.short);
+    });
+  });
+
+  buildBoard(rootPositions, targetsByPos);
+}
+
+function clearBoard(){
+  shown=false;
+  buildBoard(new Set(), new Map());
+}
+
+document.getElementById("revealBtn").addEventListener("click",reveal);
+document.getElementById("clearBtn").addEventListener("click",clearBoard);
+document.getElementById("range").addEventListener("change",()=>{ if(shown) reveal(); else clearBoard(); });
+document.getElementById("rootNote").addEventListener("change",()=>{ if(shown) reveal(); else clearBoard(); });
+document.getElementById("playRootBtn").addEventListener("click",(e)=>{
+  playIntervalDemo();
+  const btn=e.currentTarget;
+  btn.classList.add("playing");
+  setTimeout(()=>btn.classList.remove("playing"),260);
+});
+document.getElementById("volumeSlider").addEventListener("input",(e)=>{
+  document.getElementById("volumeLabel").textContent=e.target.value+"%";
+});
+
+buildChips();
+clearBoard();
+</script>
+</body>
+</html>
